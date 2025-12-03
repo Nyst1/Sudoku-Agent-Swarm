@@ -1,0 +1,5 @@
+{
+  "name": "Sudoku Autonomous Agents",
+  "description": "A visualization of autonomous number agents solving a Sudoku puzzle through stress minimization and swarm behavior.",
+  "requestFramePermissions": []
+}
