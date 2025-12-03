@@ -299,7 +299,7 @@ const App: React.FC = () => {
         if (tickCount % 5 === 0 && isPlaying) {
              setHistory(h => {
                  const newHistory = [...h, { tick: tickCount, totalStress, solvedCount: 0 }];
-                 return newHistory.slice(-50);
+                 return newHistory;
              });
         }
 
@@ -484,7 +484,7 @@ const App: React.FC = () => {
                         stroke="#e11d48" 
                         strokeWidth={2} 
                         dot={false} 
-                        animationDuration={300}
+                        animationDuration={params.simulationSpeed < 60 ? 0 : 300}
                         />
                     </LineChart>
                     </ResponsiveContainer>
