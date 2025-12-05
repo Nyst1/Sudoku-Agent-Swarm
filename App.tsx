@@ -7,7 +7,7 @@ import SimulationControls from './components/SimulationControls';
 import NumberPalette from './components/NumberPalette';
 import AboutModal from './components/AboutModal';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { BrainCircuit, Eraser, Play, Info, Trophy, Settings, Box, Move, Grid3X3, ArrowRightLeft, ArrowUpDown } from 'lucide-react';
+import { BrainCircuit, Eraser, Play, Info, Trophy, Settings, Box, Move, Grid3X3, ArrowRightLeft, ArrowUpDown, Repeat, Download } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- State ---
@@ -21,6 +21,12 @@ const App: React.FC = () => {
   const [scoreboard, setScoreboard] = useState<ScoreRecord[]>([]);
   const [showAbout, setShowAbout] = useState(false);
   const simulationTimerRef = useRef<number | null>(null);
+
+  // Batch Run State
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchCount, setBatchCount] = useState(10);
+  const [runsRemaining, setRunsRemaining] = useState(0);
+  const [totalBatchRuns, setTotalBatchRuns] = useState(0);
 
   // Tooltip State for Scoreboard
   const [hoveredRunConfig, setHoveredRunConfig] = useState<{ params: SimulationParams, x: number, y: number } | null>(null);
@@ -61,193 +67,201 @@ const App: React.FC = () => {
     setAgents([]);
   };
 
-  const startSimulation = () => {
-    const newAgents: Agent[] = [...agents.filter(a => a.isFixed)];
+  const startSimulation = useCallback(() => {
+    // IMPORTANT: When restarting, we must use current agents state to find the fixed ones.
+    // If called from a batch restart, `agents` will be the solved board from the previous run.
+    setAgents(currentAgents => {
+      const newAgents: Agent[] = [...currentAgents.filter(a => a.isFixed)];
 
-    // Determine initialization strategy based on mode
-    if (params.constraintMode === 'box') {
-      // --- BOX MODE INITIALIZATION ---
-      // Ensure exactly one of each number (1-9) in each 3x3 box
-      
-      const getBoxIdx = (r: number, c: number) => Math.floor(r/3)*3 + Math.floor(c/3);
-      
-      const boxEmptySpots: {r:number, c:number}[][] = Array(9).fill(null).map(() => []);
-      const boxFixedValues: number[][] = Array(9).fill(null).map(() => []);
+      // Determine initialization strategy based on mode
+      if (params.constraintMode === 'box') {
+        // --- BOX MODE INITIALIZATION ---
+        const getBoxIdx = (r: number, c: number) => Math.floor(r/3)*3 + Math.floor(c/3);
+        
+        const boxEmptySpots: {r:number, c:number}[][] = Array(9).fill(null).map(() => []);
+        const boxFixedValues: number[][] = Array(9).fill(null).map(() => []);
 
-      for (let r=0; r<9; r++) {
-        for (let c=0; c<9; c++) {
-          const b = getBoxIdx(r, c);
-          const fixedAgent = agents.find(a => a.isFixed && a.pos.r === r && a.pos.c === c);
-          if (fixedAgent) {
-            boxFixedValues[b].push(fixedAgent.val);
-          } else {
-            boxEmptySpots[b].push({r, c});
+        for (let r=0; r<9; r++) {
+          for (let c=0; c<9; c++) {
+            const b = getBoxIdx(r, c);
+            const fixedAgent = currentAgents.find(a => a.isFixed && a.pos.r === r && a.pos.c === c);
+            if (fixedAgent) {
+              boxFixedValues[b].push(fixedAgent.val);
+            } else {
+              boxEmptySpots[b].push({r, c});
+            }
+          }
+        }
+
+        for (let b=0; b<9; b++) {
+          const fixed = boxFixedValues[b];
+          const empty = boxEmptySpots[b];
+          
+          let available = [1,2,3,4,5,6,7,8,9];
+          for (const fVal of fixed) {
+            const idx = available.indexOf(fVal);
+            if (idx !== -1) available.splice(idx, 1);
+          }
+          available.sort(() => Math.random() - 0.5);
+          
+          for (let i=0; i<empty.length; i++) {
+             if (i < available.length) {
+               newAgents.push({
+                  id: `agent-${available[i]}-${b}-${i}-${Date.now()}`,
+                  val: available[i],
+                  pos: empty[i],
+                  stress: 0,
+                  consecutiveStressTicks: 0,
+                  isFixed: false
+               });
+             }
+          }
+        }
+      } 
+      else if (params.constraintMode === 'row') {
+        // --- ROW MODE INITIALIZATION ---
+        const rowEmptySpots: {r:number, c:number}[][] = Array(9).fill(null).map(() => []);
+        const rowFixedValues: number[][] = Array(9).fill(null).map(() => []);
+
+        for (let r=0; r<9; r++) {
+          for (let c=0; c<9; c++) {
+            const fixedAgent = currentAgents.find(a => a.isFixed && a.pos.r === r && a.pos.c === c);
+            if (fixedAgent) {
+              rowFixedValues[r].push(fixedAgent.val);
+            } else {
+              rowEmptySpots[r].push({r, c});
+            }
+          }
+        }
+
+        for (let r=0; r<9; r++) {
+          const fixed = rowFixedValues[r];
+          const empty = rowEmptySpots[r];
+          
+          let available = [1,2,3,4,5,6,7,8,9];
+          for (const fVal of fixed) {
+            const idx = available.indexOf(fVal);
+            if (idx !== -1) available.splice(idx, 1);
+          }
+          available.sort(() => Math.random() - 0.5);
+          
+          for (let i=0; i<empty.length; i++) {
+             if (i < available.length) {
+               newAgents.push({
+                  id: `agent-${available[i]}-row-${r}-${i}-${Date.now()}`,
+                  val: available[i],
+                  pos: empty[i],
+                  stress: 0,
+                  consecutiveStressTicks: 0,
+                  isFixed: false
+               });
+             }
           }
         }
       }
+      else if (params.constraintMode === 'col') {
+        // --- COLUMN MODE INITIALIZATION ---
+        const colEmptySpots: {r:number, c:number}[][] = Array(9).fill(null).map(() => []);
+        const colFixedValues: number[][] = Array(9).fill(null).map(() => []);
 
-      for (let b=0; b<9; b++) {
-        const fixed = boxFixedValues[b];
-        const empty = boxEmptySpots[b];
-        
-        let available = [1,2,3,4,5,6,7,8,9];
-        for (const fVal of fixed) {
-          const idx = available.indexOf(fVal);
-          if (idx !== -1) available.splice(idx, 1);
+        for (let r=0; r<9; r++) {
+          for (let c=0; c<9; c++) {
+            const fixedAgent = currentAgents.find(a => a.isFixed && a.pos.r === r && a.pos.c === c);
+            if (fixedAgent) {
+              colFixedValues[c].push(fixedAgent.val);
+            } else {
+              colEmptySpots[c].push({r, c});
+            }
+          }
         }
-        available.sort(() => Math.random() - 0.5);
-        
-        for (let i=0; i<empty.length; i++) {
-           if (i < available.length) {
-             newAgents.push({
-                id: `agent-${available[i]}-${b}-${i}-${Date.now()}`,
-                val: available[i],
-                pos: empty[i],
+
+        for (let c=0; c<9; c++) {
+          const fixed = colFixedValues[c];
+          const empty = colEmptySpots[c];
+          
+          let available = [1,2,3,4,5,6,7,8,9];
+          for (const fVal of fixed) {
+            const idx = available.indexOf(fVal);
+            if (idx !== -1) available.splice(idx, 1);
+          }
+          available.sort(() => Math.random() - 0.5);
+          
+          for (let i=0; i<empty.length; i++) {
+             if (i < available.length) {
+               newAgents.push({
+                  id: `agent-${available[i]}-col-${c}-${i}-${Date.now()}`,
+                  val: available[i],
+                  pos: empty[i],
+                  stress: 0,
+                  consecutiveStressTicks: 0,
+                  isFixed: false
+               });
+             }
+          }
+        }
+      }
+      else {
+        // --- FREE MODE INITIALIZATION ---
+        const counts = Array(10).fill(0);
+        const occupiedPositions = new Set<string>();
+
+        currentAgents.forEach(a => {
+          if (a.isFixed) {
+            counts[a.val]++;
+            occupiedPositions.add(`${a.pos.r},${a.pos.c}`);
+          }
+        });
+
+        const emptySpots: { r: number, c: number }[] = [];
+        for (let r = 0; r < 9; r++) {
+          for (let c = 0; c < 9; c++) {
+            if (!occupiedPositions.has(`${r},${c}`)) {
+              emptySpots.push({ r, c });
+            }
+          }
+        }
+        emptySpots.sort(() => Math.random() - 0.5);
+
+        let spotIndex = 0;
+
+        for (let num = 1; num <= 9; num++) {
+          const currentCount = counts[num];
+          const needed = Math.max(0, 9 - currentCount);
+
+          for (let i = 0; i < needed; i++) {
+            if (spotIndex < emptySpots.length) {
+              newAgents.push({
+                id: `agent-${num}-${i}-${Date.now()}`,
+                val: num,
+                pos: emptySpots[spotIndex],
                 stress: 0,
                 consecutiveStressTicks: 0,
                 isFixed: false
-             });
-           }
-        }
-      }
-    } 
-    else if (params.constraintMode === 'row') {
-      // --- ROW MODE INITIALIZATION ---
-      // Ensure exactly one of each number (1-9) in each ROW
-      
-      const rowEmptySpots: {r:number, c:number}[][] = Array(9).fill(null).map(() => []);
-      const rowFixedValues: number[][] = Array(9).fill(null).map(() => []);
-
-      for (let r=0; r<9; r++) {
-        for (let c=0; c<9; c++) {
-          const fixedAgent = agents.find(a => a.isFixed && a.pos.r === r && a.pos.c === c);
-          if (fixedAgent) {
-            rowFixedValues[r].push(fixedAgent.val);
-          } else {
-            rowEmptySpots[r].push({r, c});
+              });
+              spotIndex++;
+            }
           }
         }
       }
+      return newAgents;
+    });
 
-      for (let r=0; r<9; r++) {
-        const fixed = rowFixedValues[r];
-        const empty = rowEmptySpots[r];
-        
-        let available = [1,2,3,4,5,6,7,8,9];
-        for (const fVal of fixed) {
-          const idx = available.indexOf(fVal);
-          if (idx !== -1) available.splice(idx, 1);
-        }
-        available.sort(() => Math.random() - 0.5);
-        
-        for (let i=0; i<empty.length; i++) {
-           if (i < available.length) {
-             newAgents.push({
-                id: `agent-${available[i]}-row-${r}-${i}-${Date.now()}`,
-                val: available[i],
-                pos: empty[i],
-                stress: 0,
-                consecutiveStressTicks: 0,
-                isFixed: false
-             });
-           }
-        }
-      }
-    }
-    else if (params.constraintMode === 'col') {
-      // --- COLUMN MODE INITIALIZATION ---
-      // Ensure exactly one of each number (1-9) in each COLUMN
-      
-      const colEmptySpots: {r:number, c:number}[][] = Array(9).fill(null).map(() => []);
-      const colFixedValues: number[][] = Array(9).fill(null).map(() => []);
-
-      for (let r=0; r<9; r++) {
-        for (let c=0; c<9; c++) {
-          const fixedAgent = agents.find(a => a.isFixed && a.pos.r === r && a.pos.c === c);
-          if (fixedAgent) {
-            colFixedValues[c].push(fixedAgent.val);
-          } else {
-            colEmptySpots[c].push({r, c});
-          }
-        }
-      }
-
-      for (let c=0; c<9; c++) {
-        const fixed = colFixedValues[c];
-        const empty = colEmptySpots[c];
-        
-        let available = [1,2,3,4,5,6,7,8,9];
-        for (const fVal of fixed) {
-          const idx = available.indexOf(fVal);
-          if (idx !== -1) available.splice(idx, 1);
-        }
-        available.sort(() => Math.random() - 0.5);
-        
-        for (let i=0; i<empty.length; i++) {
-           if (i < available.length) {
-             newAgents.push({
-                id: `agent-${available[i]}-col-${c}-${i}-${Date.now()}`,
-                val: available[i],
-                pos: empty[i],
-                stress: 0,
-                consecutiveStressTicks: 0,
-                isFixed: false
-             });
-           }
-        }
-      }
-    }
-    else {
-      // --- FREE MODE INITIALIZATION ---
-      // Ensure 9 of each number total across the whole board
-      
-      const counts = Array(10).fill(0);
-      const occupiedPositions = new Set<string>();
-
-      agents.forEach(a => {
-        if (a.isFixed) {
-          counts[a.val]++;
-          occupiedPositions.add(`${a.pos.r},${a.pos.c}`);
-        }
-      });
-
-      const emptySpots: { r: number, c: number }[] = [];
-      for (let r = 0; r < 9; r++) {
-        for (let c = 0; c < 9; c++) {
-          if (!occupiedPositions.has(`${r},${c}`)) {
-            emptySpots.push({ r, c });
-          }
-        }
-      }
-      emptySpots.sort(() => Math.random() - 0.5);
-
-      let spotIndex = 0;
-
-      for (let num = 1; num <= 9; num++) {
-        const currentCount = counts[num];
-        const needed = Math.max(0, 9 - currentCount);
-
-        for (let i = 0; i < needed; i++) {
-          if (spotIndex < emptySpots.length) {
-            newAgents.push({
-              id: `agent-${num}-${i}-${Date.now()}`,
-              val: num,
-              pos: emptySpots[spotIndex],
-              stress: 0,
-              consecutiveStressTicks: 0,
-              isFixed: false
-            });
-            spotIndex++;
-          }
-        }
-      }
-    }
-
-    setAgents(newAgents);
     setIsSetupMode(false);
     setIsPlaying(true);
     setTickCount(0);
     setHistory([]);
+  }, [params.constraintMode]);
+
+  // Wrapper to handle batch initialization
+  const handleStart = () => {
+    if (isBatchMode) {
+      setRunsRemaining(batchCount - 1); // Current one counts as 1
+      setTotalBatchRuns(batchCount);
+    } else {
+      setRunsRemaining(0);
+      setTotalBatchRuns(1);
+    }
+    startSimulation();
   };
 
   const handleReset = () => {
@@ -257,7 +271,61 @@ const App: React.FC = () => {
     setAgents(prev => prev.filter(a => a.isFixed));
     setHistory([]);
     setTickCount(0);
+    // Reset batch state
+    setRunsRemaining(0);
+    setTotalBatchRuns(0);
     // Do NOT reset scoreboard here, so user can compare runs
+  };
+
+  const handleDownloadCSV = () => {
+    if (scoreboard.length === 0) return;
+
+    // specific headers
+    const headers = [
+      "Timestamp",
+      "Ticks",
+      "Mode",
+      "Infection Rate",
+      "Simulation Speed",
+      "Stress Threshold",
+      "Threshold Decay",
+      "Randomness Factor",
+      "Crowding Penalty",
+      "Row Penalty",
+      "Col Penalty",
+      "Box Penalty",
+      "Stress Accumulation"
+    ];
+
+    const rows = scoreboard.map(run => [
+      run.timestamp,
+      run.ticks,
+      run.params.constraintMode === 'none' ? 'Free' : run.params.constraintMode.charAt(0).toUpperCase() + run.params.constraintMode.slice(1),
+      run.params.infectionRate,
+      run.params.simulationSpeed,
+      run.params.stressThreshold,
+      run.params.thresholdDecay,
+      run.params.randomnessFactor,
+      run.params.crowdingPenalty,
+      run.params.rowPenalty,
+      run.params.colPenalty,
+      run.params.boxPenalty,
+      run.params.stressAccumulation
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(r => r.join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `sudoku_swarm_results_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // --- Simulation Loop ---
@@ -290,7 +358,7 @@ const App: React.FC = () => {
     };
   }, [isPlaying, isSetupMode, params.simulationSpeed, tick]);
 
-  // Handle Stop Condition & Stats Updates
+  // Handle Stop Condition, Stats Updates & Batch Logic
   useEffect(() => {
     if (!isSetupMode && agents.length > 0) {
         const totalStress = agents.reduce((sum, a) => sum + a.stress, 0);
@@ -306,7 +374,11 @@ const App: React.FC = () => {
         // Check Success
         // Ensure we have run at least 1 tick (tickCount > 0)
         if (totalStress <= 1 && isPlaying && tickCount > 0) {
+            
+            // STOP immediately to prevent infinite loop where useEffect keeps detecting success
             setIsPlaying(false);
+
+            // 1. Record Score
             setScoreboard(prev => {
                 const newRecord = {
                     runId: Date.now(),
@@ -314,18 +386,31 @@ const App: React.FC = () => {
                     params: { ...params },
                     timestamp: new Date().toLocaleTimeString()
                 };
-                // Add new record and sort by ticks (ascending)
                 return [...prev, newRecord].sort((a, b) => a.ticks - b.ticks);
             });
+
+            // 2. Handle Batch Logic
+            if (runsRemaining > 0) {
+              setRunsRemaining(prev => prev - 1);
+              // Trigger next run with slight delay to ensure render cycle completes
+              setTimeout(() => {
+                 startSimulation();
+              }, 100);
+            }
         }
     }
-  }, [agents, isPlaying, isSetupMode, tickCount, params]);
+  }, [agents, isPlaying, isSetupMode, tickCount, params, runsRemaining, startSimulation]);
 
   const totalCurrentStress = agents.reduce((sum, a) => sum + a.stress, 0);
 
   const setConstraintMode = (mode: ConstraintMode) => {
     setParams(p => ({ ...p, constraintMode: mode }));
   };
+
+  // Helper for batch status display
+  const batchStatus = (isBatchMode || runsRemaining > 0) && !isSetupMode 
+    ? { current: totalBatchRuns - runsRemaining, total: totalBatchRuns }
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center py-8 px-4 font-sans">
@@ -436,13 +521,42 @@ const App: React.FC = () => {
                     </button>
                   </div>
                </div>
+               
+               <div className="pt-2">
+                 <div className="flex items-center gap-4 py-3 px-1">
+                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsBatchMode(!isBatchMode)}>
+                      <input 
+                        type="checkbox" 
+                        id="batchMode"
+                        checked={isBatchMode}
+                        onChange={(e) => setIsBatchMode(e.target.checked)}
+                        className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <label htmlFor="batchMode" className="text-sm font-semibold text-slate-700 cursor-pointer select-none">Batch Run</label>
+                    </div>
+                    
+                    {isBatchMode && (
+                      <div className="flex items-center gap-2 animate-in fade-in slide-in-from-left-2 duration-200">
+                        <span className="text-sm text-slate-500">Count:</span>
+                        <input 
+                          type="number" 
+                          min="2" 
+                          max="1000"
+                          value={batchCount}
+                          onChange={(e) => setBatchCount(Math.max(2, parseInt(e.target.value) || 2))}
+                          className="w-20 px-2 py-1 text-sm border border-slate-300 rounded-md focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    )}
+                 </div>
+               </div>
 
-               <div className="flex gap-4 mt-4 pt-4 border-t border-slate-100">
+               <div className="flex gap-4 mt-2 pt-4 border-t border-slate-100">
                  <button 
-                    onClick={startSimulation}
+                    onClick={handleStart}
                     className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-6 rounded-lg font-bold flex items-center justify-center gap-2 transition-colors shadow-md hover:shadow-lg"
                  >
-                    <Play size={20} /> Start Swarm
+                    <Play size={20} /> {isBatchMode ? 'Start Batch' : 'Start Swarm'}
                  </button>
                  <button 
                     onClick={handleClearBoard}
@@ -457,11 +571,12 @@ const App: React.FC = () => {
               isPlaying={isPlaying}
               onTogglePlay={() => setIsPlaying(!isPlaying)}
               onReset={handleReset}
-              onRestart={startSimulation}
+              onRestart={handleStart}
               params={params}
               setParams={setParams}
               tickCount={tickCount}
               totalStress={totalCurrentStress}
+              batchStatus={batchStatus}
             />
           )}
 
@@ -493,15 +608,26 @@ const App: React.FC = () => {
 
                 {scoreboard.length > 0 && (
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 animate-in fade-in duration-500 relative">
-                        <h3 className="text-sm font-bold text-slate-700 mb-4 uppercase tracking-wider flex items-center gap-2">
-                             <Trophy size={16} className="text-amber-500" />
-                             Run History
-                        </h3>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                                <Trophy size={16} className="text-amber-500" />
+                                Run History
+                            </h3>
+                            <button 
+                                onClick={handleDownloadCSV}
+                                className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-indigo-600 transition-colors px-2 py-1 rounded hover:bg-slate-100"
+                                title="Download CSV"
+                            >
+                                <Download size={14} />
+                                CSV
+                            </button>
+                        </div>
                         <div className="overflow-x-auto max-h-60 overflow-y-auto">
                             <table className="w-full text-xs text-left">
                                 <thead className="text-slate-500 border-b border-slate-100 sticky top-0 bg-white">
                                     <tr>
                                         <th className="pb-2 font-semibold pl-2">Time</th>
+                                        <th className="pb-2 font-semibold">Mode</th>
                                         <th className="pb-2 font-semibold">Ticks</th>
                                         <th className="pb-2 font-semibold text-center">Config</th>
                                     </tr>
@@ -510,6 +636,7 @@ const App: React.FC = () => {
                                     {scoreboard.map((run) => (
                                         <tr key={run.runId} className="border-b border-slate-50 hover:bg-slate-50">
                                             <td className="py-2 pl-2">{run.timestamp}</td>
+                                            <td className="py-2 capitalize font-medium">{run.params.constraintMode === 'none' ? 'free' : run.params.constraintMode}</td>
                                             <td className="py-2 font-bold text-indigo-600">{run.ticks}</td>
                                             <td className="py-2 text-center">
                                                 <div 
@@ -543,7 +670,7 @@ const App: React.FC = () => {
               Agent Religions (Rules)
             </h3>
             <ul className="list-disc pl-5 space-y-1">
-              <li><strong>Row/Col/Box Religion:</strong> Agents feel stress if another agent of the same number is in their row, column, or 3x3 box.</li>
+              <li><strong>Row/Col/Box Religion:</strong> Agents feel stress if another agent of the same number is in the same row, column, or 3x3 box.</li>
               <li><strong>Desperation:</strong> The longer an agent remains stressed, the lower their movement threshold becomes, eventually forcing them to move even to suboptimal spots.</li>
               <li><strong>Panic:</strong> Long-term stress introduces randomness, making agents jump erratically to break deadlocks.</li>
             </ul>
@@ -565,7 +692,7 @@ const App: React.FC = () => {
             <div className="font-bold text-slate-300 mb-2 border-b border-slate-600 pb-1">Run Parameters</div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 <span className="text-slate-400">Mode:</span>
-                <span className="uppercase text-indigo-400">{hoveredRunConfig.params.constraintMode}</span>
+                <span className="uppercase text-indigo-400">{hoveredRunConfig.params.constraintMode === 'none' ? 'free' : hoveredRunConfig.params.constraintMode}</span>
 
                 <span className="text-slate-400">Infection:</span>
                 <span>{Math.round(hoveredRunConfig.params.infectionRate * 100)}%</span>

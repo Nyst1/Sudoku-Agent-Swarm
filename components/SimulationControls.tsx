@@ -1,6 +1,6 @@
 import React from 'react';
 import { SimulationParams } from '../types';
-import { Play, Pause, RotateCcw, Activity, Info, RefreshCw } from 'lucide-react';
+import { Play, Pause, RotateCcw, Activity, Info, RefreshCw, Repeat } from 'lucide-react';
 
 interface Props {
   isPlaying: boolean;
@@ -11,6 +11,7 @@ interface Props {
   setParams: (p: SimulationParams) => void;
   tickCount: number;
   totalStress: number;
+  batchStatus?: { current: number; total: number } | null;
 }
 
 interface SliderProps {
@@ -73,6 +74,7 @@ const SimulationControls: React.FC<Props> = ({
   setParams,
   tickCount,
   totalStress,
+  batchStatus
 }) => {
   const handleChange = (key: Exclude<keyof SimulationParams, 'constraintMode'>, value: number) => {
     setParams({ ...params, [key]: value });
@@ -112,6 +114,13 @@ const SimulationControls: React.FC<Props> = ({
           </button>
         </div>
         <div className="flex items-center gap-6 text-sm">
+          {batchStatus && (
+            <div className="flex items-center gap-2 hidden sm:flex animate-in fade-in">
+                <Repeat size={16} className="text-indigo-500" />
+                <span className="text-slate-400">Batch:</span>
+                <span className="font-mono font-bold text-indigo-600">{batchStatus.current} / {batchStatus.total}</span>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-slate-400">Tick:</span>
             <span className="font-mono font-bold text-slate-700">{tickCount}</span>
